@@ -19,16 +19,15 @@
 //! in YAML is the same document in another notation and is the next layer
 //! here; the schemas inside are `xmip-core-contract-json-schema`'s.
 
+pub mod description;
+
 use contract::{
     Contract, ContractDescriptor, ContractError, ContractFactory, ContractId, ValidationIssue,
-    ValidationResult,
+    ValidationResult, reference,
 };
+use description::{Description, METHODS};
 use serde_json::Value;
 use stream::Stream;
-
-const METHODS: [&str; 8] = [
-    "get", "put", "post", "delete", "options", "head", "patch", "trace",
-];
 
 /// The bound operation: a method and path, or an operation id.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -119,10 +118,8 @@ fn descriptor(id: &str) -> ContractDescriptor {
 fn soundness(document: &Value) -> Vec<ValidationIssue> {
     let mut issues = Vec::new();
     let Some(object) = document.as_object() else {
-        return vec![issue(
-            "malformed",
+        return vec![ValidationIssue::malformed(
             "the document is not a JSON object",
-            None,
         )];
     };
     let version = object
@@ -132,7 +129,7 @@ fn soundness(document: &Value) -> Vec<ValidationIssue> {
         .unwrap_or("");
     let responses_required = !version.starts_with("3.1");
     if !(version.starts_with("3.") || version == "2.0") {
-        issues.push(issue(
+        issues.push(ValidationIssue::new(
             "structure",
             "neither openapi 3.x nor swagger 2.0 is declared",
             Some("openapi".into()),
@@ -145,7 +142,7 @@ fn soundness(document: &Value) -> Vec<ValidationIssue> {
             .and_then(Value::as_str)
             .is_none()
         {
-            issues.push(issue(
+            issues.push(ValidationIssue::new(
                 "structure",
                 &format!("info.{field} is missing"),
                 Some("info".into()),
@@ -156,7 +153,7 @@ fn soundness(document: &Value) -> Vec<ValidationIssue> {
         Some(Value::Object(paths)) => {
             for (template, item) in paths {
                 if !template.starts_with('/') {
-                    issues.push(issue(
+                    issues.push(ValidationIssue::new(
                         "structure",
                         "a path template that does not begin with /",
                         Some(format!("paths.{template}")),
@@ -173,7 +170,7 @@ fn soundness(document: &Value) -> Vec<ValidationIssue> {
                             .and_then(Value::as_object)
                             .is_none()
                     {
-                        issues.push(issue(
+                        issues.push(ValidationIssue::new(
                             "structure",
                             "an operation without responses",
                             Some(format!("paths.{template}.{method}")),
@@ -182,65 +179,36 @@ fn soundness(document: &Value) -> Vec<ValidationIssue> {
                 }
             }
         }
-        Some(_) => issues.push(issue(
+        Some(_) => issues.push(ValidationIssue::new(
             "structure",
             "paths is not an object",
             Some("paths".into()),
         )),
         None if responses_required => {
-            issues.push(issue("structure", "paths is missing", Some("paths".into())));
+            issues.push(ValidationIssue::new(
+                "structure",
+                "paths is missing",
+                Some("paths".into()),
+            ));
         }
         None => {}
     }
-    references(document, document, "", &mut issues);
+    issues.extend(reference::dangling(document));
     issues
-}
-
-/// Every `$ref` under `value` that begins with `#` and does not land.
-fn references(root: &Value, value: &Value, path: &str, issues: &mut Vec<ValidationIssue>) {
-    match value {
-        Value::Object(object) => {
-            if let Some(Value::String(target)) = object.get("$ref")
-                && let Some(pointer) = target.strip_prefix('#')
-                && root.pointer(pointer).is_none()
-            {
-                issues.push(issue(
-                    "reference",
-                    &format!("$ref {target} does not land"),
-                    Some(path.trim_start_matches('.').to_string()),
-                ));
-            }
-            for (key, child) in object {
-                references(root, child, &format!("{path}.{key}"), issues);
-            }
-        }
-        Value::Array(items) => {
-            for (i, child) in items.iter().enumerate() {
-                references(root, child, &format!("{path}[{i}]"), issues);
-            }
-        }
-        _ => {}
-    }
 }
 
 /// Whether `document` defines `operation`.
 fn defines(document: &Value, operation: &Operation) -> bool {
-    let Some(paths) = document.get("paths").and_then(Value::as_object) else {
-        return false;
-    };
-    match operation {
-        Operation::Route { method, path } => {
-            paths.get(path).and_then(|item| item.get(method)).is_some()
-        }
-        Operation::Id(id) => paths.values().any(|item| {
-            METHODS.iter().any(|method| {
-                item.get(method)
-                    .and_then(|operation| operation.get("operationId"))
-                    .and_then(Value::as_str)
-                    == Some(id)
-            })
-        }),
-    }
+    let declared = Description::of(document);
+    declared
+        .operations()
+        .iter()
+        .any(|candidate| match operation {
+            Operation::Route { method, path } => {
+                &candidate.method == method && &candidate.template == path
+            }
+            Operation::Id(id) => candidate.operation_id.as_deref() == Some(id),
+        })
 }
 
 impl Contract for OpenApi {
@@ -266,10 +234,8 @@ impl Contract for OpenApi {
         let document: Value = match serde_json::from_slice(stream.bytes()) {
             Ok(document) => document,
             Err(error) => {
-                return Ok(result(vec![issue(
-                    "malformed",
+                return Ok(ValidationResult::of(vec![ValidationIssue::malformed(
                     &format!("not JSON: {error}"),
-                    None,
                 )]));
             }
         };
@@ -277,28 +243,13 @@ impl Contract for OpenApi {
         if let Some(operation) = &self.operation
             && !defines(&document, operation)
         {
-            issues.push(issue(
+            issues.push(ValidationIssue::new(
                 "operation",
                 &format!("does not define {}", operation.reference()),
                 Some("paths".into()),
             ));
         }
-        Ok(result(issues))
-    }
-}
-
-fn issue(code: &str, message: &str, path: Option<String>) -> ValidationIssue {
-    ValidationIssue {
-        code: code.to_string(),
-        message: message.to_string(),
-        path,
-    }
-}
-
-fn result(issues: Vec<ValidationIssue>) -> ValidationResult {
-    ValidationResult {
-        valid: issues.is_empty(),
-        issues,
+        Ok(ValidationResult::of(issues))
     }
 }
 
@@ -322,7 +273,7 @@ impl ContractFactory for OpenApiFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xcore::StreamId;
+    use contract::fixture::stream_as as stream;
 
     const ORDERS: &str = r##"{
         "openapi": "3.0.3",
@@ -343,14 +294,6 @@ mod tests {
             "responses": {"List": {"description": "the orders"}}
         }
     }"##;
-
-    fn stream(text: &str, media_type: Option<&str>) -> Stream {
-        Stream::new(
-            StreamId::new(1),
-            text.as_bytes().to_vec(),
-            media_type.map(str::to_string),
-        )
-    }
 
     #[test]
     fn a_sound_description_holds_bare_and_bound() {
