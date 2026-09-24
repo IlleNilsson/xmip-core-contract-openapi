@@ -5,7 +5,7 @@
 //! contract that reads it, rather than reading the document a second way
 //! (ADR-0044).
 
-use contract::ContractError;
+use sdk::contract::ContractError;
 use serde_json::Value;
 
 /// The eight HTTP methods a path item may carry.
