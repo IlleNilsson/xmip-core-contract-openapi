@@ -21,11 +21,13 @@
 
 pub mod description;
 
-use contract::{
-    Contract, ContractDescriptor, ContractError, ContractFactory, ContractId, ValidationIssue,
-    ValidationResult, reference,
-};
+use contract::reference;
+
 use description::{Description, METHODS};
+use sdk::contract::{
+    Contract, ContractDescriptor, ContractError, ContractFactory, ContractId, ValidationIssue,
+    ValidationResult,
+};
 use serde_json::Value;
 use stream::Stream;
 
