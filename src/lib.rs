@@ -23,11 +23,11 @@ pub mod description;
 
 use contract::reference;
 
-use description::{Description, METHODS};
-use sdk::contract::{
+use contract::{
     Contract, ContractDescriptor, ContractError, ContractFactory, ContractId, ValidationIssue,
     ValidationResult,
 };
+use description::{Description, METHODS};
 use serde_json::Value;
 use stream::Stream;
 
