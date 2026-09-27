@@ -21,6 +21,7 @@
 
 pub mod description;
 
+use contract::place::Place;
 use contract::reference;
 use xcore::settings::{Applies, Kind, Presence, Setting, Settings};
 
@@ -135,7 +136,7 @@ fn soundness(document: &Value) -> Vec<ValidationIssue> {
         issues.push(ValidationIssue::new(
             "structure",
             "neither openapi 3.x nor swagger 2.0 is declared",
-            Some("openapi".into()),
+            Some("/openapi".into()),
         ));
     }
     for field in ["title", "version"] {
@@ -147,8 +148,8 @@ fn soundness(document: &Value) -> Vec<ValidationIssue> {
         {
             issues.push(ValidationIssue::new(
                 "structure",
-                &format!("info.{field} is missing"),
-                Some("info".into()),
+                format!("info.{field} is missing"),
+                Some("/info".into()),
             ));
         }
     }
@@ -159,7 +160,7 @@ fn soundness(document: &Value) -> Vec<ValidationIssue> {
                     issues.push(ValidationIssue::new(
                         "structure",
                         "a path template that does not begin with /",
-                        Some(format!("paths.{template}")),
+                        Some(Place::Root.field("paths").field(template).pointer()),
                     ));
                 }
                 let Some(item) = item.as_object() else {
@@ -176,7 +177,13 @@ fn soundness(document: &Value) -> Vec<ValidationIssue> {
                         issues.push(ValidationIssue::new(
                             "structure",
                             "an operation without responses",
-                            Some(format!("paths.{template}.{method}")),
+                            Some(
+                                Place::Root
+                                    .field("paths")
+                                    .field(template)
+                                    .field(method)
+                                    .pointer(),
+                            ),
                         ));
                     }
                 }
@@ -185,13 +192,13 @@ fn soundness(document: &Value) -> Vec<ValidationIssue> {
         Some(_) => issues.push(ValidationIssue::new(
             "structure",
             "paths is not an object",
-            Some("paths".into()),
+            Some("/paths".into()),
         )),
         None if responses_required => {
             issues.push(ValidationIssue::new(
                 "structure",
                 "paths is missing",
-                Some("paths".into()),
+                Some("/paths".into()),
             ));
         }
         None => {}
@@ -227,7 +234,7 @@ impl Contract for OpenApi {
         }) {
             return Ok(true);
         }
-        let Ok(text) = std::str::from_utf8(stream.bytes()) else {
+        let Ok(text) = stream.text() else {
             return Ok(false);
         };
         Ok(text.contains("\"openapi\"") || text.contains("\"swagger\""))
@@ -238,7 +245,7 @@ impl Contract for OpenApi {
             Ok(document) => document,
             Err(error) => {
                 return Ok(ValidationResult::of(vec![ValidationIssue::malformed(
-                    &format!("not JSON: {error}"),
+                    format!("not JSON: {error}"),
                 )]));
             }
         };
@@ -248,8 +255,8 @@ impl Contract for OpenApi {
         {
             issues.push(ValidationIssue::new(
                 "operation",
-                &format!("does not define {}", operation.reference()),
-                Some("paths".into()),
+                format!("does not define {}", operation.reference()),
+                Some("/paths".into()),
             ));
         }
         Ok(ValidationResult::of(issues))
@@ -375,7 +382,7 @@ mod tests {
         assert!(messages[2].contains("$ref #/components/schemas/Nope does not land"));
         assert_eq!(
             result.issues[2].path.as_deref(),
-            Some("paths.orders.post.requestBody.content.application/json.schema")
+            Some("/paths/orders/post/requestBody/content/application~1json/schema")
         );
         let no_responses = ORDERS.replace(
             r#""responses": {"201": {"description": "placed"}}"#,

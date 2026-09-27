@@ -2,6 +2,10 @@
 
 OpenAPI content contract: a sound description always, 3.x or 2.0 in JSON, every reference landing; defining a bound operation when a Location names one. A technology of [xmip-core-contract](https://github.com/IlleNilsson/xmip-core-contract).
 
+Each departure names where it is as a JSON Pointer into the description
+(`/paths/~1orders/post`), and a `$ref` is percent-decoded before it is one,
+both by `xmip-core-contract`.
+
 ## Toolchain
 
 `rust-toolchain.toml` pins the toolchain for the whole estate. Do not change it
