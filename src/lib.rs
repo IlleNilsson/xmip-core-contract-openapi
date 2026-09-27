@@ -22,6 +22,7 @@
 pub mod description;
 
 use contract::reference;
+use xcore::settings::{Applies, Kind, Presence, Setting, Settings};
 
 use contract::{
     Contract, ContractDescriptor, ContractError, ContractFactory, ContractId, ValidationIssue,
@@ -264,6 +265,10 @@ impl ContractFactory for OpenApiFactory {
         "openapi"
     }
 
+    fn settings(&self) -> &'static Settings {
+        SETTINGS
+    }
+
     fn load(&self, reference: &str) -> Result<Box<dyn Contract>, ContractError> {
         if reference.trim().is_empty() {
             return Ok(Box::new(OpenApi::new()));
@@ -271,6 +276,18 @@ impl ContractFactory for OpenApiFactory {
         Ok(Box::new(OpenApi::of(Operation::parse(reference)?)))
     }
 }
+
+/// What a Location gives this contract (ADR-0064, amendment 2026-09-26).
+const SETTINGS: &Settings = &Settings {
+    technology: env!("CARGO_PKG_NAME"),
+    settings: &[Setting {
+        name: "reference",
+        kind: Kind::Text,
+        presence: Presence::Optional,
+        meaning: "The operation, POST /orders or placeOrder, the description must define.",
+        applies: Applies::Both,
+    }],
+};
 
 #[cfg(test)]
 mod tests {
@@ -400,5 +417,30 @@ mod tests {
         assert_eq!(result.issues.len(), 2);
         assert!(Operation::parse("").is_err());
         assert!(Operation::parse("POST orders").is_err());
+    }
+
+    #[test]
+    fn openapi_declares_its_settings_and_reads_through_them() {
+        assert!(SETTINGS.problems().is_empty(), "{:?}", SETTINGS.problems());
+        let given = |name: &str, value: &str| {
+            (
+                name.to_string(),
+                xcore::settings::Given::Text(value.to_string()),
+            )
+        };
+        assert!(OpenApiFactory.open(Applies::Both, &[]).is_ok(), "bare");
+        let bound = OpenApiFactory
+            .open(Applies::Receive, &[given("reference", "POST /orders")])
+            .expect("bound");
+        assert!(bound.descriptor().id.0.contains("/orders"));
+        let refused = OpenApiFactory
+            .open(Applies::Send, &[given("unheard_of", "x")])
+            .err()
+            .expect("an unknown setting is refused");
+        assert!(
+            refused.message.contains("unheard_of"),
+            "{}",
+            refused.message
+        );
     }
 }
