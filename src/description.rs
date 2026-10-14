@@ -122,7 +122,7 @@ mod tests {
     fn a_description_without_paths_or_title_declares_nothing() {
         let webhooks = Description::parse(r#"{"openapi":"3.1.0","webhooks":{}}"#).expect("json");
         assert_eq!(webhooks.title(), "");
-        assert!(webhooks.operations().is_empty());
+        assert_eq!(webhooks.operations(), []);
         assert!(Description::parse("{nope").is_err());
     }
 }
